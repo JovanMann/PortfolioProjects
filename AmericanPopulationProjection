@@ -1,0 +1,182 @@
+CREATE SCHEMA ca_population;
+
+USE ca_population;
+
+CREATE TABLE pop_proj(
+	county_code VARCHAR(45) NOT NULL,
+    county_name VARCHAR(45) NOT NULL,
+    date_year INT NOT NULL,
+    race_code INT NOT NULL,
+    race TEXT NOT NULL,
+    gender VARCHAR(6) NOT NULL,
+    age INT NOT NULL,
+    population INT NOT NULL
+);
+
+/* Load Data */
+/* ignore first header line, delimiter setting, etc*/
+LOAD DATA LOCAL INFILE 'C:\\Users\\User\\CA_DRU_proj_2010-2060.csv'
+INTO TABLE pop_proj
+FIELDS TERMINATED BY ','
+ENCLOSED BY '"'
+LINES TERMINATED BY '\n'
+IGNORE 1 LINES;
+
+/* check the loaded data */
+SELECT * FROM pop_proj
+LIMIT 10;
+
+/* SIDE NOTE */
+/*
+If there is any issues with loading local data is disabled, we need to enable it.
+Ref: https://stackoverflow.com/questions/59993844/error-loading-local-data-is-disabled-this-must-be-enabled-on-both-the-client
+Ref: if you can't access mysql from cmd, add mysql path in path first https://www.qualitestgroup.com/resources/knowledge-center/how-to-guide/add-mysql-path-windows/
+1) log into to mysql from command line >> mysql -u <username> -p
+2) check local_infile varialbe current status >> show global variables like 'local_infile';
+3) if that is OFF,enable it >> SET GLOBAL local_infile=1;
+4) quit the server >> quit
+5) connect to server again >> mysql --local_infile=1 -u root -p
+6) run the load sql statement.
+*/ 
+ 28  ...cs - MySQL/01.California Population Projection/02.California_Population_Data_Analysis.sql 
+@@ -0,0 +1,28 @@
+/* To increase performance, index on county name */
+CREATE INDEX county_name
+ON pop_proj(county_name);
+
+/* Inital list of male and female populations per county for 2014 */
+SELECT county_name, gender, SUM(population) As total_population
+FROM pop_proj
+WHERE date_year = 2014
+GROUP BY county_name, gender
+ORDER BY county_name;
+
+/* return information in specially formatted table */
+/* list of male and female populations per county for 2014 */
+SELECT p.county_name, 
+	SUM(p.population) AS Male, 
+    female_pop.Female FROM 
+		(SELECT county_name, SUM(population) AS Female
+		FROM pop_proj
+		WHERE date_year = 2014 and gender = 'Female'
+		GROUP BY county_name
+		ORDER BY county_name) AS female_pop
+JOIN pop_proj p
+ON p.county_name = female_pop.county_name
+WHERE p.date_year = 2014 AND p.gender = 'Male'
+GROUP BY p.county_name
+ORDER BY p.county_name;
+
+
+ BIN +15.7 MB ...se Clinics - MySQL/01.California Population Projection/datasets/CA_DRU_proj_2010-2060.zip 
+Binary file not shown.
+ 4  Database Clinics - MySQL/01.California Population Projection/source.txt 
+@@ -0,0 +1,4 @@
+https://data.gov.uk/dataset/cb7ae6f0-4be6-4935-9277-47e5ce24a11f/road-safety-data
+
+
+https://data.ca.gov/dataset/ca-educational-attainment-personal-income
+ 21  ...inics - MySQL/04.California Education/01.California Education Create Tables Load Data.sql 
+@@ -0,0 +1,21 @@
+USE ca_population;
+
+CREATE TABLE ca_edu(
+	date_year TEXT,
+    age TEXT,
+    gender VARCHAR(6),
+    edu_attainment TEXT,
+    income TEXT,
+    population INT
+);
+
+
+/* Load data
+mysql --local_infile=1 -u root -p 
+*/
+LOAD DATA LOCAL INFILE 'C:\\Users\\User\\cleaned_CA_Educational_Attainment___Personal_Income_2008-2014.csv'
+INTO TABLE ca_edu
+FIELDS TERMINATED BY ','
+ENCLOSED BY '"'
+LINES TERMINATED BY '\n'
+IGNORE 1 LINES; 
+ 51  Database Clinics - MySQL/04.California Education/02.California Education Data Analysis.sql 
+@@ -0,0 +1,51 @@
+/* What is the percentage of education attainment for each category across differnent age group? */
+SELECT 
+	ca_edu.age, 
+	ca_edu.edu_attainment, 
+    SUM(ca_edu.population) / total_pop_by_age.total_population AS cofficient
+FROM ca_edu
+JOIN 
+	(SELECT age, SUM(population) as total_population
+	FROM ca_edu
+	GROUP BY age) AS total_pop_by_age
+ON ca_edu.age = total_pop_by_age.age
+GROUP BY ca_edu.age, ca_edu.edu_attainment;
+
+
+/* create new demographics table from the result */
+CREATE TABLE demographics AS
+SELECT 
+	ca_edu.age, 
+	ca_edu.edu_attainment, 
+    SUM(ca_edu.population) / total_pop_by_age.total_population AS coefficient
+FROM ca_edu
+JOIN 
+	(SELECT age, SUM(population) as total_population
+	FROM ca_edu
+	GROUP BY age) AS total_pop_by_age
+ON ca_edu.age = total_pop_by_age.age
+GROUP BY ca_edu.age, ca_edu.edu_attainment;
+
+
+/* 
+Using Population Projection data,
+What is the projection of education demand for each age group?
+*/
+SELECT 
+	temp_pop.date_year AS 'Year',
+    demographics.edu_attainment AS 'Education',
+    ROUND(SUM(temp_pop.total_pop * demographics.coefficient)) AS 'Demand'
+FROM
+(SELECT date_year, age, SUM(population) AS total_pop
+FROM pop_proj
+GROUP BY age, date_year) AS temp_pop
+JOIN demographics
+ON demographics.age = CASE
+	WHEN temp_pop.age < 18 THEN '00 to 17'
+    WHEN temp_pop.age < 64 THEN '65 to 80+'
+    ELSE '18 to 64'
+    END
+GROUP BY 1, 2;
+
+
+
+ 1,061  ...rnia Education/datasets/cleaned_CA_Educational_Attainment___Personal_Income_2008-2014.csv 
+Large diffs are not rendered by default.
+
+ 1,061  ...nia Education/datasets/original/CA_Educational_Attainment___Personal_Income_2008-2014.csv 
+Large diffs are not rendered by default.
+
+ 4  Database Clinics - MySQL/04.California Education/datasets/original/source.txt 
+@@ -0,0 +1,4 @@
+https://data.gov.uk/dataset/cb7ae6f0-4be6-4935-9277-47e5ce24a11f/road-safety-data
+
+
+https://data.ca.gov/dataset/ca-educational-attainment-personal-income
+  12  readme.md 
+@@ -62,6 +62,18 @@ SQLite project for
++ **[At the Library](SQL%20Code%20Challenges%20-%20Lynda/At%20the%20Library)** - helping the Library to manage the books statistics, check out and loan process, managing on due loans, encouraging patrons, etc.
+
+
+## [California Population Project](Database%20Clinics%20-%20MySQL/01.California%20Population%20Projection)
+MySQL project for 
++ getting population data and loading for data analysis
++ finidng out male and female populations per county for 2014
+
+## [California Education Project](Database%20Clinics%20-%20MySQL/04.California%20Education)
+MySQL project for
++ initital cleaning for education data
++ finding the percentage of education attainment for each category across differnent age group
++ getting demographics based on education data and age group
++ finding out projection of education demand for each age group based on Population Projection and Education data
